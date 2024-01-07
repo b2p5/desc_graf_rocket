@@ -1,6 +1,6 @@
-# Estructura de Datos: TxGraph
+# Descendientes en la Mempool 
 
-## Descripción General
+## Estructura de Datos: TxGraph
 
 `TxGraph` es una estructura de datos diseñada para representar un grafo de transacciones en la blockchain de Bitcoin, enfocada en el seguimiento de las relaciones entre las transacciones en la mempool.
 
