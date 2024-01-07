@@ -1,6 +1,7 @@
 # Descendientes en la Mempool 
 
 
+
 ## Estructura de Datos: TxGraph
 
 `TxGraph` es una estructura de datos diseñada para representar un grafo de transacciones en la blockchain de Bitcoin, enfocada en el seguimiento de las relaciones entre las transacciones en la mempool.
@@ -40,6 +41,7 @@
 `TxGraph` se utiliza para representar y manejar dinámicamente las relaciones entre transacciones en la mempool de Bitcoin. El script actualiza periódicamente esta estructura para reflejar el estado actual de la mempool.
 
 
+
 ## Descripción General del Programa
 
 El script en Rust utiliza Rocket para crear una aplicación web, mostrando visualmente las relaciones entre transacciones en la mempool de Bitcoin.
@@ -55,6 +57,7 @@ El script en Rust utiliza Rocket para crear una aplicación web, mostrando visua
 ### Función `get_mempool_descendants`
 
 - Obtiene los descendientes de una transacción específica en la mempool.
+
 
 
 ## Explicación de `get_descendants`
