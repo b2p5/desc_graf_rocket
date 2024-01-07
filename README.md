@@ -11,7 +11,7 @@ Este programa en Rust proporciona una solución integral para visualizar y anali
 - **Visualización de Relaciones de Transacciones**: Muestra las relaciones padre-hijo entre las transacciones en la mempool.
 - **Actualización Dinámica del Grafo de Transacciones**: Utiliza una estructura de datos `TxGraph` para mantener y actualizar las relaciones entre transacciones.
 - **Presentación en HTML**: Genera contenido HTML para visualizar las transacciones y sus relaciones de una manera clara y comprensible.
-- **Manejo de Concurrency**: Emplea hilos para gestionar la actualización periódica de la información y mantener la aplicación web responsiva.
+- **Manejo de Concurrencia**: Emplea hilos para gestionar la actualización periódica de la información y mantener la aplicación web responsiva.
 
 ## Estructura y Funcionamiento
 
