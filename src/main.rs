@@ -10,6 +10,10 @@ use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}, thread, time::Dur
 // Constante que define el intervalo de tiempo de espera en el hilo
 const SLEEP_TIME: u64 = 20;
 
+const USER:&str = "userX";
+const PWS:&str  = "wsx";
+
+
 // Estructura para representar el grafo de transacciones
 struct TxGraph {
     // HashMap que almacena las relaciones de transacciones: clave es el ID de la transacción padre, valor es un conjunto de IDs de transacciones hijas
@@ -91,7 +95,7 @@ fn rocket() -> _ {
     // Creando un hilo para actualizar el grafo periódicamente
     thread::spawn(move || {
         let rpc_url = "http://localhost:8332";
-        let rpc_auth = Auth::UserPass("userX".to_string(), "wsx".to_string());
+        let rpc_auth = Auth::UserPass(USER.to_string(), PWS.to_string());
         let client = Client::new(rpc_url, rpc_auth).expect("Error al conectar con el nodo Bitcoin Core");
 
         // Bucle infinito para actualizar el grafo
