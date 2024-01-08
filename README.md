@@ -44,8 +44,9 @@ Este programa en Rust proporciona una solución integral para visualizar y anali
 ## Instalación y Ejecución
 
 1. Clonar el repositorio.
-2. Navegar al directorio del proyecto y ejecutar `cargo build --release`.
-3. Iniciar el programa con `./target/release/[nombre_del_programa]`.
+2. Entra en main.rs y cambia Usuario y clave para entrar en Bitcoin Core.
+3. Navegar al directorio del proyecto y ejecutar `cargo build --release`.
+4. Iniciar el programa con `./target/release/[nombre_del_programa]`.
 
 ## Contribuciones y Soporte
 
