@@ -10,8 +10,8 @@ use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}, thread, time::Dur
 // Constante que define el intervalo de tiempo de espera en el hilo
 const SLEEP_TIME: u64 = 20;
 
-const USER:&str = "userX";
-const PWS:&str  = "wsx";
+const USER:&str = "tu usuario";
+const PWS:&str  = "tu password";
 
 
 // Estructura para representar el grafo de transacciones
