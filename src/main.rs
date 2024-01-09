@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 // Constante que define el intervalo de tiempo de espera en el hilo
 const SLEEP_TIME: u64 = 20;
 
-// const USER:&str = "tu usuario";
-// const PWS:&str  = "tu password";
+const USER:&str = "tu usuario";
+const PWS:&str  = "tu password";
 
 
 // Estructura para representar el grafo de transacciones

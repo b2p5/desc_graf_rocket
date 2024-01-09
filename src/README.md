@@ -80,3 +80,26 @@ Esta función actualiza `TxGraph` con las relaciones entre transacciones en la m
 
 - Uso de `Mutex` para la gestión segura del acceso concurrente al grafo.
 - La función refleja cuidadosamente las relaciones entre transacciones en la mempool.
+
+
+## Función `get_descen_json`
+
+### Descripción
+La función `get_descen_json` es una ruta del servidor web implementada en nuestro proyecto usando Rocket, un marco de trabajo web en Rust. Está diseñada para generar una respuesta en formato JSON que detalla las relaciones entre transacciones en la mempool de Bitcoin.
+
+### Detalles Técnicos
+- **Ruta**: `@get("/get_descen_json")`
+- **Parámetros**: 
+  - `graph`: Un estado compartido del tipo `Arc<Mutex<TxGraph>>`, representando un grafo de transacciones. Cada nodo en este grafo es una transacción en la mempool de Bitcoin.
+
+### Funcionalidad
+La función bloquea y desbloquea el estado compartido del grafo para acceder a su contenido actual. Itera sobre cada transacción (considerada como 'transacción padre') y sus transacciones asociadas ('transacciones hijas'). En caso de que las transacciones hijas tengan sus propias transacciones asociadas ('transacciones nietas'), también las incluye.
+
+Para cada conjunto de relaciones padre-hijo-nieto, crea un objeto JSON estructurado. Este objeto refleja la jerarquía y las conexiones entre las transacciones. Al final, todas estas estructuras JSON se agrupan en un arreglo, que se serializa y se envía como respuesta al cliente.
+
+### Respuesta
+La respuesta es un objeto JSON que contiene un arreglo de transacciones, cada una con su identificador y los identificadores de sus transacciones descendientes (hijas y nietas), si las hay. Esta estructura proporciona una visión clara de la cadena de transacciones en la mempool de Bitcoin.
+
+### Uso
+Esta ruta es accesible mediante una petición GET al endpoint `/get_descen_json` del servidor. La respuesta puede ser utilizada para análisis de la mempool o visualización de la cadena de transacciones en aplicaciones cliente.
+
