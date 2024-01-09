@@ -4,16 +4,16 @@ use rocket::State;
 use rocket::response::{self, Responder, Response};
 use rocket::http::ContentType;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
-use serde_json::Value;
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}, thread, time::Duration};
+
+use serde_json::{json, Value};
 
 // Constante que define el intervalo de tiempo de espera en el hilo
 const SLEEP_TIME: u64 = 20;
 
 // const USER:&str = "tu usuario";
 // const PWS:&str  = "tu password";
-const USER:&str = "userX";
-const PWS:&str  = "wsx";
+
 
 // Estructura para representar el grafo de transacciones
 struct TxGraph {
@@ -41,7 +41,7 @@ impl TxGraph {
 }
 
 // Estructura para manejar contenido HTML como respuesta
-struct HtmlContent(String);
+pub struct HtmlContent(String);
 
 // Implementación del trait Responder para HtmlContent, permitiendo su uso como respuesta HTTP
 impl<'r> Responder<'r, 'static> for HtmlContent {
@@ -51,6 +51,62 @@ impl<'r> Responder<'r, 'static> for HtmlContent {
             .sized_body(self.0.len(), std::io::Cursor::new(self.0))
             .ok()
     }
+}
+
+// Estructura para manejar la respuesta JSON
+pub struct JsonResponse(String);
+
+impl<'r> Responder<'r, 'static> for JsonResponse {
+    fn respond_to(self, _: &'r rocket::Request) -> response::Result<'static> {
+        Response::build()
+            .header(ContentType::JSON)
+            .sized_body(self.0.len(), std::io::Cursor::new(self.0))
+            .ok()
+    }
+}
+
+
+// Ruta del servidor web para obtener las transacciones descendientes en formato JSON
+#[get("/get_descen_json")]
+fn get_descen_json(graph: &State<Arc<Mutex<TxGraph>>>) -> Result<JsonResponse, rocket::response::Debug<serde_json::Error>> {
+    let graph = graph.lock().unwrap();
+    let mut transactions = Vec::new();
+    let mut parent_object: serde_json::Value ;
+
+    for (parent_id, children) in &graph.edges {
+
+        parent_object = json!({});
+
+        for child_id in children.iter() {
+            if let Some(grandchildren) = graph.edges.get(child_id) {
+
+                for grandchild_id in grandchildren.iter() {
+                    
+                    parent_object = json!({
+                        "0": parent_id,
+                        "1": child_id,
+                        "2": grandchild_id
+                    });
+
+                }
+
+
+            } else {
+         
+                parent_object = json!({
+                    "0": parent_id,
+                    "1": child_id,
+                });
+            }
+        }
+
+
+
+        transactions.push(parent_object);
+    }
+
+    let stringified_json = serde_json::to_string(&json!({"transacciones": transactions}))?;
+    Ok(JsonResponse(stringified_json))
 }
 
 // Ruta del servidor web para obtener las transacciones descendientes en formato HTML
@@ -86,6 +142,7 @@ fn get_descen_html(graph: &State<Arc<Mutex<TxGraph>>>, tx_ini: usize, tx_end: us
     HtmlContent(html_output)
 }
 
+
 // Función principal para lanzar el servidor Rocket
 #[launch]
 fn rocket() -> _ {
@@ -111,7 +168,7 @@ fn rocket() -> _ {
     });
 
     // Configurando el servidor Rocket con la ruta definida
-    rocket::build().manage(graph).mount("/", routes![get_descen_html])
+    rocket::build().manage(graph).mount("/", routes![get_descen_json, get_descen_html])
 }
 
 // Función para obtener las transacciones en la mempool del nodo Bitcoin Core
@@ -141,7 +198,7 @@ fn get_descendants(mempool_txs: &HashMap<String, Value>, client: &Client, graph:
         if let Some(num_desc) = tx_data.get("descendantcount").and_then(Value::as_i64) {
             if num_desc > 0 {
                 num_txs += 1;
-                if num_txs > 1000 {
+                if num_txs > 1000000 {
                     break;
                 }
 
