@@ -3,46 +3,75 @@
 use rocket::State;
 use rocket::response::{self, Responder, Response};
 use rocket::http::ContentType;
-use bitcoincore_rpc::{Auth, Client, RpcApi};
+use rocket::fs::FileServer;
+use rocket::fs::relative;
+use bitcoincore_rpc::{Auth, Client, RpcApi, Error as BitcoinRpcError};
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}, thread, time::Duration};
+use serde_json::Value;
 
-use serde_json::{json, Value};
+const SLEEP_TIME: u64 = 5;
+const NUM_TX_PROCE: u64 = 100000;
 
-// Constante que define el intervalo de tiempo de espera en el hilo
-const SLEEP_TIME: u64 = 20;
-
-const USER:&str = "tu usuario";
-const PWS:&str  = "tu password";
+// const USER:&str = "tu usuario";
+// const PWS:&str  = "tu password";
 
 
-// Estructura para representar el grafo de transacciones
-struct TxGraph {
-    // HashMap que almacena las relaciones de transacciones: clave es el ID de la transacción padre, valor es un conjunto de IDs de transacciones hijas
-    edges: HashMap<String, HashSet<String>>,
+/// Estructura para representar una transacción padre-hijos e hijos - nietos
+struct SeparatedTxGraph {
+    // Relaciones padre -> hijos
+    parent_child_edges: HashMap<String, HashSet<String>>,
+    // Relaciones hijo -> nietos
+    child_grandchild_edges: HashMap<String, HashSet<String>>,
 }
 
-impl TxGraph {
-    // Constructor para crear un nuevo grafo de transacciones vacío
-    fn new() -> TxGraph {
-        TxGraph {
-            edges: HashMap::new(),
+// Implementación de la estructura SeparatedTxGraph
+impl SeparatedTxGraph {
+
+    // Constructor para crear un nuevo grafo de transacciones separado vacío
+    fn new() -> SeparatedTxGraph {
+        SeparatedTxGraph {
+            parent_child_edges: HashMap::new(),
+            child_grandchild_edges: HashMap::new(),
         }
     }
 
     // Función para agregar una relación padre-hijo entre dos transacciones
-    fn add_edge(&mut self, parent_id: String, child_id: String) {
-        self.edges.entry(parent_id).or_default().insert(child_id);
+    fn add_parent_child_edges(&mut self, parent_id: String, child_id: String) {
+        self.parent_child_edges.entry(parent_id).or_default().insert(child_id);
     }
 
-    // Función para limpiar el grafo de transacciones, eliminando aquellas que ya no están en la mempool
-    fn clean_transactions(&mut self, mempool_txs: &HashMap<String, Value>) {
-        self.edges.retain(|tx_id, _| mempool_txs.contains_key(tx_id));
+    // Función para agregar una relación hijo-nieto entre dos transacciones
+    fn add_child_grandchild_edges(&mut self, child_id: String, grandchild_id: String) {
+        self.child_grandchild_edges.entry(child_id).or_default().insert(grandchild_id);
     }
+
+    // Función para limpiar el grafo de transacciones,
+    // eliminando aquellas que ya no están en la mempool
+    fn clean_separated_tx_graph(&mut self, mempool_txs: &HashSet<String>) {
+
+        self.parent_child_edges.retain(|tx_id, _| mempool_txs.contains(tx_id));
+        self.child_grandchild_edges.retain(|tx_id, _| mempool_txs.contains(tx_id));
+    }
+
+    // Función para obtener los descendientes de una transacción
+    // fn get_descendants(&self, tx_id: &str) -> HashSet<String> {
+    //     let mut descendants = HashSet::new();
+    //     if let Some(children) = self.parent_child_edges.get(tx_id) {
+    //         for child in children {
+    //             descendants.insert(child.clone());
+    //             if let Some(grandchildren) = self.child_grandchild_edges.get(child) {
+    //                 for grandchild in grandchildren {
+    //                     descendants.insert(grandchild.clone());
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     descendants
+    // }
 }
 
 // Estructura para manejar contenido HTML como respuesta
 pub struct HtmlContent(String);
-
 // Implementación del trait Responder para HtmlContent, permitiendo su uso como respuesta HTTP
 impl<'r> Responder<'r, 'static> for HtmlContent {
     fn respond_to(self, _: &'r rocket::Request<'_>) -> response::Result<'static> {
@@ -53,181 +82,212 @@ impl<'r> Responder<'r, 'static> for HtmlContent {
     }
 }
 
-// Estructura para manejar la respuesta JSON
-pub struct JsonResponse(String);
-
-impl<'r> Responder<'r, 'static> for JsonResponse {
-    fn respond_to(self, _: &'r rocket::Request) -> response::Result<'static> {
-        Response::build()
-            .header(ContentType::JSON)
-            .sized_body(self.0.len(), std::io::Cursor::new(self.0))
-            .ok()
-    }
-}
-
-
-// Ruta del servidor web para obtener las transacciones descendientes en formato JSON
-#[get("/get_descen_json")]
-fn get_descen_json(graph: &State<Arc<Mutex<TxGraph>>>) -> Result<JsonResponse, rocket::response::Debug<serde_json::Error>> {
-    let graph = graph.lock().unwrap();
-    let mut transactions = Vec::new();
-    let mut parent_object: serde_json::Value ;
-
-    for (parent_id, children) in &graph.edges {
-
-        parent_object = json!({});
-
-        for child_id in children.iter() {
-            if let Some(grandchildren) = graph.edges.get(child_id) {
-
-                for grandchild_id in grandchildren.iter() {
-                    
-                    parent_object = json!({
-                        "0": parent_id,
-                        "1": child_id,
-                        "2": grandchild_id
-                    });
-
-                }
-
-
-            } else {
-         
-                parent_object = json!({
-                    "0": parent_id,
-                    "1": child_id,
-                });
-            }
-        }
-
-
-
-        transactions.push(parent_object);
-    }
-
-    let stringified_json = serde_json::to_string(&json!({"transacciones": transactions}))?;
-    Ok(JsonResponse(stringified_json))
-}
 
 // Ruta del servidor web para obtener las transacciones descendientes en formato HTML
-#[get("/get_descen_html/<tx_ini>/<tx_end>")]
-fn get_descen_html(graph: &State<Arc<Mutex<TxGraph>>>, tx_ini: usize, tx_end: usize) -> HtmlContent {
-    let graph = graph.lock().unwrap();
-    let mut transactions = String::new();
+#[get("/get_descen_html")]
+fn get_descen_html( separated_graph: &State<Arc<Mutex<SeparatedTxGraph>>>) -> HtmlContent {
+    let separated_graph = separated_graph.lock().unwrap();
+    
+    let mut conta_padre ;
+    let mut conta_hijo ;
+    let mut conta_nieto ;
+    let mut conta_todo = 0;
 
     // Generando contenido HTML con las transacciones
+    let mut transactions = String::new();
     transactions.push_str("<h1>Txs de la Mempool</h1>");
-    transactions.push_str(&format!("<h3>Mostrando las transacciones desde la Tx:{} hasta la Tx:{}</h3><br>", tx_ini, tx_end));
     transactions.push_str("<style> .tx-padre { color: black; } .tx-hijo { color: green; } .tx-nieto { color: blue; } </style>");
 
-    // Iterando sobre las transacciones para mostrar sus relaciones en HTML
-    for (index, (parent_id, children)) in graph.edges.iter().enumerate() {
-        if index >= tx_ini && index <= tx_end {
-            transactions.push_str(&format!("<p class='tx-padre'>Tx padre: {} </p>", parent_id));
-            for child_id in children {
-                transactions.push_str(&format!("<p class='tx-hijo'>&nbsp;&nbsp Tx hijo: {:?}</p>", child_id));
+    // Iteramos sobre las transacciones padre separated_graph.parent_child_edges
+    conta_padre = 1;
+    for (parent_id, children) in separated_graph.parent_child_edges.iter() {
+        transactions.push_str(&format!("<p class='tx-padre'> {}:Tx padre: {} </p>",conta_padre, parent_id));
+        conta_todo += 1;
+        conta_padre += 1;
 
-                // Mostrando transacciones nieto, si existen
-                if let Some(grandchildrens) = graph.edges.get(child_id) {
-                    for grandchildren in grandchildrens {
-                        transactions.push_str(&format!("<p class='tx-nieto'>&nbsp;&nbsp;&nbsp;&nbsp; Tx nieto: {:?}</p>", grandchildren));
-                    }
+        // Iteramos sobre las transacciones hijo children
+        conta_hijo = 1;
+        for child_id in children {
+            transactions.push_str(&format!("<p class='tx-hijo'>&nbsp;&nbsp; {}:Tx hijo: {:?}</p>",conta_hijo, child_id));
+            conta_todo += 1;
+            conta_hijo += 1;
+
+            // Iteramos sobre las transacciones nieto separated_graph.child_grandchild_edges
+            if let Some(grandchildrens) = separated_graph.child_grandchild_edges.get(child_id) {
+                conta_nieto = 1;
+                for grandchildren in grandchildrens {
+                    transactions.push_str(&format!("<p class='tx-nieto'>&nbsp;&nbsp;&nbsp;&nbsp; {}:Tx nieto: {:?}</p>",conta_nieto, grandchildren));
+                    conta_todo += 1;
+                    conta_nieto += 1;
                 }
             }
         }
     }
+    
+    transactions.push_str(&format!("\n<p > Total líneas listado  {} : </p>", conta_todo));
 
     // Empaquetando el contenido HTML como una respuesta
     let html_output = format!("<html><body>{}</body></html>", transactions);
     HtmlContent(html_output)
+
 }
 
 
 // Función principal para lanzar el servidor Rocket
 #[launch]
 fn rocket() -> _ {
+  
     // Inicializando el grafo de transacciones y su versión compartida entre hilos
-    let graph = Arc::new(Mutex::new(TxGraph::new()));
-    let graph_clone = Arc::clone(&graph);
+    let separated_graph = Arc::new(Mutex::new(SeparatedTxGraph::new()));
+    let separated_graph_clone = Arc::clone(&separated_graph);
 
     // Creando un hilo para actualizar el grafo periódicamente
     thread::spawn(move || {
-        let rpc_url = "http://localhost:8332";
+
+        // Iniciar contador de tiempo
+        let start = std::time::Instant::now();
+
+        // Conexión con el nodo Bitcoin Core
+        let rpc_url  = "http://localhost:8332";
         let rpc_auth = Auth::UserPass(USER.to_string(), PWS.to_string());
-        let client = Client::new(rpc_url, rpc_auth).expect("Error al conectar con el nodo Bitcoin Core");
+        let client = Client::new(rpc_url, rpc_auth).expect("Error to connect Bitcoin Core");
 
-        // Bucle infinito para actualizar el grafo
+
+        // Parte primera: procesar todas las transacciones de la mempool
+        let mut mempool_txs = get_raw_mempool(&client).expect("Error to get mempool transactions");
+        
+        println!("\nESPERE, PROCESANDO TODA LA MEMPOOL (este proceso puede tardar unos minutos)\n");
+        println!("=> Txs mempool: {}", mempool_txs.len());
+        
+        get_graph(&mempool_txs, &client, &separated_graph_clone);
+
+        // Calcular tiempo transcurrido en minutos y segundos desde start
+        let duration = start.elapsed();
+        let minutes = duration.as_secs() / 60;
+        let seconds = duration.as_secs() % 60;
+        let miliseconds = duration.subsec_millis();
+        let velocity = mempool_txs.len() as f64 / (seconds as f64 + miliseconds as f64 / 1000.0);
+        // Formatea la velocidad a 1 decimal
+        let velocity = format!("{:.1}", velocity);
+
+        println!("Procesadas todas las txs de la mempool: {}m {}s velocidad: {} Txs/s ", minutes, seconds, velocity);
+        println!("=> Txs separadas padre: {}", separated_graph_clone.lock().unwrap().parent_child_edges.len());
+        println!("=> Txs separadas hijo: {}\n", separated_graph_clone.lock().unwrap().child_grandchild_edges.len());
+        println!("YA PUEDES HACER PETICIONES VIA WEB.\n\n");
+
+        // Bucle infinito para procesar las transacciones nuevas que llegan a la mempool
         loop {
-            let mempool_txs = get_raw_mempool(&client).expect("Error al obtener transacciones del mempool");
-            get_descendants(&mempool_txs, &client, &graph_clone);
-            graph_clone.lock().unwrap().clean_transactions(&mempool_txs);
 
-            println!("=> Txs grafo: {}", graph_clone.lock().unwrap().edges.len());
+            // Iniciar contador de tiempo
+            let start = std::time::Instant::now();
+
+            // Obteniendo las transacciones nuevas de la mempool 
+            // (mempool_news_txs - mempool_txs)
+            let mempool_now = get_raw_mempool(&client).expect("Error al obtener transacciones del mempool");
+            let mut mempool_new_txs = HashSet::new();
+            for hash_tx in mempool_now.clone() {
+                if !mempool_txs.contains(&hash_tx) {
+                    mempool_new_txs.insert(hash_tx);
+                }
+            }
+
+            mempool_txs = mempool_now;
+
+            // Procesar las transacciones nuevas de la mempool para actualizar el grafo
+            get_graph(&mempool_new_txs, &client, &separated_graph_clone);
+
+            // Eliminamos del grafo las transacciones que ya no están en la mempool
+            //graph_clone.lock().unwrap().clean_transactions(&mempool_txs);
+            separated_graph_clone.lock().unwrap().clean_separated_tx_graph(&mempool_txs);
+
+            //println!("=> Txs graf_clone: {}", graph_clone.lock().unwrap().edges.len());
+            println!("=> Txs padre - hijos: {}", separated_graph_clone.lock().unwrap().parent_child_edges.len());
+            println!("=> Txs hijo - nietos: {}", separated_graph_clone.lock().unwrap().child_grandchild_edges.len());
+     
+            // Calcular tiempo transcurrido en minutos y segundos desde start
+            let duration = start.elapsed();
+            let seconds = duration.as_secs() % 60;
+            let miliseconds = duration.subsec_millis();
+            let velocity = mempool_new_txs.len() as f64 / (seconds as f64 + miliseconds as f64 / 1000.0);
+            // Formatea la velocidad a 1 decimal
+            let velocity = format!("{:.1}", velocity);
+            println!("Procesadas {} Txs nuevas: {}s {}ms velocidad: {} Txs/s \n", mempool_new_txs.len(), seconds, miliseconds, velocity);
+
+
             thread::sleep(Duration::from_secs(SLEEP_TIME));
         }
     });
 
     // Configurando el servidor Rocket con la ruta definida
-    rocket::build().manage(graph).mount("/", routes![get_descen_json, get_descen_html])
+    rocket::build()
+        .manage(separated_graph)
+        .mount("/", routes!(get_descen_html))
+        .mount("/static", FileServer::from(relative!("static")))
+
 }
 
-// Función para obtener las transacciones en la mempool del nodo Bitcoin Core
-fn get_raw_mempool(client: &Client) -> bitcoincore_rpc::Result<HashMap<String, Value>> {
-    match client.call("getrawmempool", &[Value::Bool(true)]) {
-        Ok(mempool) => Ok(mempool),
-        Err(e) => {
-            println!("Error al obtener el mempool: {}", e);
-            Err(e)
-        }
-    }
-}
+// Función para obtener el grafo de transacciones
+fn get_graph(mempool_txs: &HashSet<String>, client: &Client, 
+             separated_graph: &Arc<Mutex<SeparatedTxGraph>>) {
 
-// Función para obtener y procesar los descendientes de las transacciones en la mempool
-fn get_descendants(mempool_txs: &HashMap<String, Value>, client: &Client, graph: &Arc<Mutex<TxGraph>>) {
-    let mut graph = graph.lock().unwrap();
+    //let mut graph = graph.lock().unwrap();
+    let mut separated_graph = separated_graph.lock().unwrap();
+
     let mut num_txs = 0;
 
-    // Iterando sobre las transacciones de la mempool
-    for (hash_tx, tx_data) in mempool_txs {
-        // Continuar si la transacción ya está en el grafo
-        if graph.edges.contains_key(hash_tx) {
-            continue;
+    // Iterando sobre todas las transacciones de la mempool
+    for hash_tx in mempool_txs {
+
+        // Obtener los descendientes de la transacción actual (hijos)
+        let descendants = get_mempool_descendants(client, hash_tx).unwrap_or_else(|_| vec![]);
+        for desc_tx in descendants {
+            // Procesar solamente las primeras NUM_TX_PROCE transacciones de la mempool
+            num_txs += 1;
+            if num_txs > NUM_TX_PROCE {
+                break;
+            }
+            
+            separated_graph.add_parent_child_edges(hash_tx.clone(), desc_tx.clone());
+            
+            // Obtener los descendientes de los descendientes (nietos)
+            let desc_descendants = get_mempool_descendants(client, &desc_tx).unwrap_or_else(|_| vec![]);
+            for desc_desc_tx in desc_descendants {
+                
+                separated_graph.add_child_grandchild_edges(desc_tx.clone(), desc_desc_tx.clone());
+            }
         } 
-
-        // Procesar solo las transacciones con descendientes
-        if let Some(num_desc) = tx_data.get("descendantcount").and_then(Value::as_i64) {
-            if num_desc > 0 {
-                num_txs += 1;
-                if num_txs > 1000000 {
-                    break;
-                }
-
-                // Obtener los descendientes de la transacción actual
-                let descendants = get_mempool_descendants(client, hash_tx).unwrap_or_else(|_| vec![]);
-                for desc_tx in descendants {
-                    graph.add_edge(hash_tx.clone(), desc_tx.clone());
-
-                    // Obtener y procesar los descendientes de los descendientes (nietos)
-                    let desc_descendants = get_mempool_descendants(client, &desc_tx).unwrap_or_else(|_| vec![]);
-                    for desc_desc_tx in desc_descendants {
-                        if graph.edges.contains_key(desc_tx.clone().as_str()) {
-                            continue;
-                        } 
-                        graph.add_edge(desc_tx.clone(), desc_desc_tx);
-                    }
-                } 
-            } 
-        }
     }
+
+    // Iterar separated_graph.child_grandchild_edges  para eliminar de parent_child_edges 
+    // los padres que están en child_grandchild_edges como hijos
+    for (child_id, _grandchildren) in separated_graph.child_grandchild_edges.clone() {
+        // Si child_id está en separated_graph.parent_child_edges 
+        // eliminar child_id de separated_graph.parent_child_edges
+        if separated_graph.parent_child_edges.contains_key(&child_id) {
+            separated_graph.parent_child_edges.remove(&child_id);
+        }
+
+    }
+
 }
 
-// Función para obtener los descendientes de una transacción específica en la mempool
 fn get_mempool_descendants(client: &Client, txid: &str) -> bitcoincore_rpc::Result<Vec<String>> {
     match client.call("getmempooldescendants", &[Value::String(txid.to_string())]){
         Ok(descendants) => Ok(descendants),
-        Err(e) => {
-            println!("Error al obtener descendientes: {}", e);
-            Err(e)
-        }
+        Err(e) => Err(e)
     }
 }
+
+fn get_raw_mempool(client: &Client) -> Result<HashSet<String>, BitcoinRpcError> {
+    match client.call::<Vec<String>>("getrawmempool", &[Value::Bool(false)]) {
+        Ok(mempool_txids) => {
+            let txids: HashSet<String> = mempool_txids.into_iter().collect();
+            Ok(txids)
+        },
+        Err(e) => Err(e)
+    }
+}
+
+
+
+
